@@ -183,7 +183,7 @@ if (transactionStatus !== "success") {
     );
 
     const [lockedInvoices] = await connection.query(
-      `SELECT id, subtotal_kobo, status
+      `SELECT id, customer_id, subtotal_kobo, status
        FROM invoices
        WHERE id = ?
        FOR UPDATE`,
@@ -230,12 +230,53 @@ if (transactionStatus !== "success") {
       [attempt.id]
     );
 
-    await connection.query(
-      `UPDATE invoices
-       SET status = 'paid', paid_at = UTC_TIMESTAMP(3)
-       WHERE id = ?`,
-      [attempt.invoice_id]
-    );
+  
+await connection.query(
+  `UPDATE invoices
+   SET status = 'paid', paid_at = UTC_TIMESTAMP(3)
+   WHERE id = ?`,
+  [attempt.invoice_id]
+);
+
+// Find the customer's subscription
+const [subscriptions] = await connection.query(
+  `SELECT id, status
+   FROM subscriptions
+   WHERE customer_id = ?
+   ORDER BY id DESC
+   LIMIT 1
+   FOR UPDATE`,
+  [lockedInvoices[0].customer_id]
+);
+
+if (subscriptions.length === 0) {
+  throw new Error("Customer subscription not found");
+}
+
+const subscription = subscriptions[0];
+
+let newSubscriptionStatus = subscription.status;
+
+// Apply the correct successful-payment transition
+if (
+  subscription.status === "trialing" ||
+  subscription.status === "past_due" ||
+  subscription.status === "suspended"
+) {
+  newSubscriptionStatus = "active";
+}
+
+if (newSubscriptionStatus !== subscription.status) {
+  await connection.query(
+    `UPDATE subscriptions
+     SET status = ?
+     WHERE id = ?`,
+    [newSubscriptionStatus, subscription.id]
+  );
+}
+
+await connection.commit();
+
 
     await connection.commit();
 

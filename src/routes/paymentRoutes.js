@@ -7,8 +7,21 @@ const {
   verifyInvoicePayment
 } = require("../controllers/paymentController");
 
-router.post("/invoice", createInvoicePayment);
+const {
+  handleSquadWebhook
+} = require("../controllers/webhookController");
 
+const verifySquadWebhook = require("../middleware/verifySquadWebhook");
+
+// Payment routes
+router.post("/invoice", createInvoicePayment);
 router.post("/verify", verifyInvoicePayment);
+
+// Squad webhook route
+router.post(
+  "/webhook",
+  verifySquadWebhook,
+  handleSquadWebhook
+);
 
 module.exports = router;
