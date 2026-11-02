@@ -1,10 +1,15 @@
 
 const pool = require("../config/database");
 const { calculateUsageLines } = require("../services/billingCalculator");
+const {
+  calculateProratedBaseFees
+} = require("../services/prorationCalculator");
+const { getCurrentTime } = require("../utils/clock");
 
 // Close a billing period and generate its invoice
 const closeBillingPeriod = async (req, res) => {
   let connection;
+  let billingPeriodId;
 
   try {
     const { customerId, periodStart, periodEnd } = req.body;
@@ -36,7 +41,7 @@ const closeBillingPeriod = async (req, res) => {
     // Wait until the 48-hour late-event window has passed
     const fortyEightHours = 48 * 60 * 60 * 1000;
 
-    if (Date.now() < end.getTime() + fortyEightHours) {
+    if (getCurrentTime().getTime() < end.getTime() + fortyEightHours) {
       return res.status(400).json({
         message: "Billing period cannot close until 48 hours after its end"
       });
@@ -110,6 +115,7 @@ const closeBillingPeriod = async (req, res) => {
         ]
       )
     )[0][0];
+    billingPeriodId = periodId.id;
 
     if (periodId.status === "closed") {
       const [existingInvoices] = await connection.query(
@@ -125,20 +131,113 @@ const closeBillingPeriod = async (req, res) => {
       });
     }
 
-    // Add the monthly base fee as an invoice line
-    const baseFeeKobo = Number(subscription.monthly_base_fee_kobo);
+   
+    // Prepare invoice lines
+    let invoiceLines = [];
+   
+    // Get all plan changes that happened before this billing period ended
+    const [planChanges] = await connection.query(
+      `SELECT
+          spc.old_plan_id,
+          spc.new_plan_id,
+          DATE_FORMAT(
+            spc.effective_at,
+            '%Y-%m-%dT%H:%i:%s.%fZ'
+          ) AS effective_at
+       FROM subscription_plan_changes spc
+       WHERE spc.subscription_id = ?
+       ORDER BY spc.effective_at ASC`,
+      [
+        subscription.subscription_id,
+      ]
+    );
 
-    if (!Number.isSafeInteger(baseFeeKobo)) {
-      throw new Error("Base fee exceeds safe integer range");
+    // Find the plan active at the beginning of this billing period
+    let startingPlanId = Number(subscription.plan_id);
+
+    if (planChanges.length > 0) {
+      const changesBeforeOrAtStart = planChanges.filter(
+        change => new Date(change.effective_at) <= start
+      );
+
+      if (changesBeforeOrAtStart.length > 0) {
+        startingPlanId = Number(
+          changesBeforeOrAtStart[
+            changesBeforeOrAtStart.length - 1
+          ].new_plan_id
+        );
+      } else {
+        // No change before the period started.
+        // Use the old plan from the first recorded change.
+        startingPlanId = Number(planChanges[0].old_plan_id);
+      }
     }
 
-    const invoiceLines = [{
-      description: `Monthly base fee - ${subscription.plan_name}`,
-      lineType: "base_fee",
-      quantity: 1,
-      unitPriceKobo: baseFeeKobo,
-      amountKobo: baseFeeKobo
-    }];
+    // Keep only plan changes inside this billing period
+    const changesDuringPeriod = planChanges.filter(change => {
+      const changeDate = new Date(change.effective_at);
+      return changeDate > start && changeDate < end;
+    });
+
+    // Build the periods during which each plan was active
+    const planSegments = [];
+
+    let currentPlanId = startingPlanId;
+    let segmentStart = start;
+
+    for (const change of changesDuringPeriod) {
+      const changeDate = new Date(change.effective_at);
+
+      planSegments.push({
+        planId: currentPlanId,
+        periodStart: segmentStart,
+        periodEnd: changeDate
+      });
+
+      currentPlanId = Number(change.new_plan_id);
+      segmentStart = changeDate;
+    }
+
+    // Add the final plan period
+    planSegments.push({
+      planId: currentPlanId,
+      periodStart: segmentStart,
+      periodEnd: end
+    });
+
+    // The plan active at the end of the period prices usage
+    const usagePlanId = currentPlanId;
+
+
+    // Calculate the prorated base fee for every plan period
+    for (const segment of planSegments) {
+      const [plans] = await connection.query(
+        `SELECT name, monthly_base_fee_kobo
+         FROM plans
+         WHERE id = ?`,
+        [segment.planId]
+      );
+
+      if (plans.length === 0) {
+        throw new Error("Plan not found during billing calculation");
+      }
+
+      const plan = plans[0];
+
+      const proratedLines = calculateProratedBaseFees([
+        {
+          planName: plan.name,
+          monthlyFeeKobo: Number(plan.monthly_base_fee_kobo),
+          periodStart: segment.periodStart,
+          periodEnd: segment.periodEnd,
+          billingStart: start,
+          billingEnd: end
+        }
+      ]);
+
+      invoiceLines.push(...proratedLines);
+    }
+
 
     // Get the usage total for each meter during this period
     const [usageTotals] = await connection.query(
@@ -163,7 +262,7 @@ const closeBillingPeriod = async (req, res) => {
          FROM price_tiers
          WHERE plan_id = ? AND meter_name = ?
          ORDER BY from_quantity`,
-        [subscription.plan_id, usage.meter_name]
+        [usagePlanId, usage.meter_name]
       );
 
       if (tiers.length === 0) {
@@ -252,10 +351,23 @@ const closeBillingPeriod = async (req, res) => {
       await connection.rollback();
     }
 
-    if (error.code === "ER_DUP_ENTRY") {
-      return res.status(409).json({
-        message: "An invoice already exists for this billing period"
-      });
+   
+    if (error.code === "ER_DUP_ENTRY" && billingPeriodId) {
+      const [existingInvoices] = await pool.query(
+        `SELECT id, customer_id, billing_period_id,
+                subtotal_kobo, status
+         FROM invoices
+         WHERE customer_id = ?
+           AND billing_period_id = ?`,
+       [Number(req.body.customerId), billingPeriodId]
+      );
+
+      if (existingInvoices.length > 0) {
+        return res.status(200).json({
+          message: "Invoice already exists for this billing period",
+          invoice: existingInvoices[0]
+        });
+      }
     }
 
     console.error("Close billing period error:", error.message);

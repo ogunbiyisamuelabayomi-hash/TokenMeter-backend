@@ -1,3 +1,4 @@
+
 const mysql = require("mysql2/promise");
 require("dotenv").config();
 
@@ -8,7 +9,14 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME,
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
+  timezone: "Z",
+  enableKeepAlive: true
+});
+
+// Set every connection's MySQL session timezone to UTC
+pool.on("connection", (connection) => {
+  connection.query("SET time_zone = '+00:00'");
 });
 
 module.exports = pool;

@@ -204,8 +204,124 @@ const transitionSubscription = async (req, res) => {
   }
 };
 
+// Change a subscription plan
+
+const changeSubscriptionPlan = async (req, res) => {
+  let connection;
+
+  try {
+    const { id } = req.params;
+    const { newPlanId } = req.body;
+
+    if (!id || !Number.isInteger(Number(id)) || Number(id) < 1) {
+      return res.status(400).json({
+        message: "Valid subscription ID is required"
+      });
+    }
+
+    if (!newPlanId || !Number.isInteger(Number(newPlanId)) ||
+        Number(newPlanId) < 1) {
+      return res.status(400).json({
+        message: "Valid new plan ID is required"
+      });
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // Lock the subscription while changing its plan
+    const [subscriptions] = await connection.query(
+      `SELECT id, plan_id, status
+       FROM subscriptions
+       WHERE id = ?
+       FOR UPDATE`,
+      [id]
+    );
+
+    if (subscriptions.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({
+        message: "Subscription not found"
+      });
+    }
+
+    const subscription = subscriptions[0];
+
+    if (subscription.status !== "active") {
+      await connection.rollback();
+      return res.status(400).json({
+        message: "Only active subscriptions can change plans"
+      });
+    }
+
+    if (Number(subscription.plan_id) === Number(newPlanId)) {
+      await connection.rollback();
+      return res.status(400).json({
+        message: "Subscription is already on this plan"
+      });
+    }
+
+    const [plans] = await connection.query(
+      "SELECT id FROM plans WHERE id = ?",
+      [newPlanId]
+    );
+
+    if (plans.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({
+        message: "New plan not found"
+      });
+    }
+
+    // Record the plan change using UTC
+    const [result] = await connection.query(
+      `INSERT INTO subscription_plan_changes
+       (subscription_id, old_plan_id, new_plan_id,
+        effective_at, created_at)
+       VALUES (?, ?, ?, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))`,
+      [id, subscription.plan_id, newPlanId]
+    );
+
+    // Update the subscription to the new plan
+    await connection.query(
+      `UPDATE subscriptions
+       SET plan_id = ?
+       WHERE id = ?`,
+      [newPlanId, id]
+    );
+
+    await connection.commit();
+
+    return res.status(200).json({
+      message: "Subscription plan changed successfully",
+      planChange: {
+        id: result.insertId,
+        subscriptionId: Number(id),
+        oldPlanId: Number(subscription.plan_id),
+        newPlanId: Number(newPlanId)
+      }
+    });
+
+  } catch (error) {
+    if (connection) {
+      await connection.rollback();
+    }
+
+    console.error("Change subscription plan error:", error.message);
+
+    return res.status(500).json({
+      message: "Unable to change subscription plan"
+    });
+
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+};
 module.exports = {
   createSubscription,
   getSubscriptions,
-  transitionSubscription
+  transitionSubscription,
+  changeSubscriptionPlan
 };
