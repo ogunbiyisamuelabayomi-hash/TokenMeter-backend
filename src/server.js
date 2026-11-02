@@ -2,6 +2,11 @@ require("dotenv").config();
 
 const app = require("./app");
 const pool = require("./config/database");
+const cron = require("node-cron");
+
+const {
+  processDuePaymentRetries
+} = require("./jobs/paymentRetryJob");
 
 const PORT = process.env.PORT || 4620;
 
@@ -14,8 +19,15 @@ async function startServer() {
     connection.release();
 
     app.listen(PORT, () => {
-      console.log(`TokenMeter server running on port ${PORT}`);
-    });
+  console.log(`TokenMeter server running on port ${PORT}`);
+
+  // Check for due payment retries every minute
+  cron.schedule("* * * * *", () => {
+    processDuePaymentRetries();
+  });
+
+  console.log("Payment retry scheduler started");
+});
   } catch (error) {
     console.error("Unable to connect to MySQL:", error.message);
     process.exit(1);

@@ -4,6 +4,11 @@ const {
     initiateSquadPayment,
     verifySquadPayment
  } = require("../services/squadService");
+
+ const{
+  schedulePaymentRetry
+ } = require("../services/paymentRetryService");
+ 
 const crypto = require("crypto");
 
 // Initiate payment for an existing invoice
@@ -163,14 +168,24 @@ const verifyInvoicePayment = async (req, res) => {
   transaction.transaction_status || ""
 ).toLowerCase();
 
-if (transactionStatus !== "success") {
-      return res.status(200).json({
-        message: "Payment has not succeeded",
-        transactionStatus: transaction.transaction_status,
-        paymentAttemptId: attempt.id
-      });
-    }
+if (transactionStatus === "failed" || transactionStatus === "abandoned") {
+  const retryResult = await schedulePaymentRetry(attempt.id);
 
+  return res.status(200).json({
+    message: "Payment failed",
+    transactionStatus: transaction.transaction_status,
+    paymentAttemptId: attempt.id,
+    retry: retryResult
+  });
+}
+
+if (transactionStatus !== "success") {
+  return res.status(200).json({
+    message: "Payment is still pending",
+    transactionStatus: transaction.transaction_status,
+    paymentAttemptId: attempt.id
+  });
+}
     await connection.beginTransaction();
 
     // Lock the invoice and payment attempt to avoid duplicate updates
@@ -276,9 +291,6 @@ if (newSubscriptionStatus !== subscription.status) {
 }
 
 await connection.commit();
-
-
-    await connection.commit();
 
     return res.status(200).json({
       message: "Payment verified and invoice marked as paid",
