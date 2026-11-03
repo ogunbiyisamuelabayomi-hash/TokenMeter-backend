@@ -163,3 +163,18 @@ CREATE TABLE subscription_plan_changes (
 
     INDEX idx_plan_changes (subscription_id, effective_at)
 );
+
+-- 12. Spending cap alerts
+CREATE TABLE spending_cap_alerts (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    customer_id BIGINT UNSIGNED NOT NULL,
+    alert_type ENUM('80_percent') NOT NULL,
+    spending_kobo BIGINT UNSIGNED NOT NULL,
+    spending_cap_kobo BIGINT UNSIGNED NOT NULL,
+    status ENUM('pending', 'processed') NOT NULL DEFAULT 'pending',
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    processed_at DATETIME(3) NULL,
+
+    FOREIGN KEY (customer_id) REFERENCES customers(id),
+    INDEX idx_spending_alerts (status, created_at)
+);

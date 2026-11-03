@@ -130,6 +130,8 @@ const setSpendingCap = async (req, res) => {
 const { calculateUsageLines } = require("../services/billingCalculator");
 
 // Check whether a customer can make another AI request
+
+
 const checkSpending = async (req, res) => {
   try {
     const { id } = req.params;
@@ -174,13 +176,18 @@ const checkSpending = async (req, res) => {
       });
     }
 
+    const spendingCap = Number(cap);
+
+    if (!Number.isSafeInteger(spendingCap) || spendingCap < 0) {
+      throw new Error("Invalid spending cap value");
+    }
+
     // Find the customer's subscription and plan
     const [subscriptions] = await pool.query(
-      `SELECT s.plan_id, p.monthly_base_fee_kobo
-       FROM subscriptions s
-       JOIN plans p ON p.id = s.plan_id
-       WHERE s.customer_id = ?
-       ORDER BY s.id DESC
+      `SELECT plan_id
+       FROM subscriptions
+       WHERE customer_id = ?
+       ORDER BY id DESC
        LIMIT 1`,
       [Number(id)]
     );
@@ -195,11 +202,13 @@ const checkSpending = async (req, res) => {
 
     // Get the current UTC calendar month
     const now = new Date();
+
     const monthStart = new Date(Date.UTC(
       now.getUTCFullYear(),
       now.getUTCMonth(),
       1
     ));
+
     const nextMonth = new Date(Date.UTC(
       now.getUTCFullYear(),
       now.getUTCMonth() + 1,
@@ -224,14 +233,10 @@ const checkSpending = async (req, res) => {
       ]
     );
 
-    // Start with the monthly base fee
-    let currentSpend = Number(subscription.monthly_base_fee_kobo);
+    // Spending cap applies to usage charges only
+    let currentSpend = 0;
 
-    if (!Number.isSafeInteger(currentSpend)) {
-      throw new Error("Base fee exceeds safe integer range");
-    }
-
-    // Add the current month's usage charges
+    // Calculate the customer's current usage charges
     for (const usage of usageTotals) {
       const [tiers] = await pool.query(
         `SELECT from_quantity, to_quantity, price_per_unit_kobo
@@ -269,25 +274,55 @@ const checkSpending = async (req, res) => {
       });
     }
 
-    // Stop the request if it would reach or exceed the cap
-    if (projectedSpend >= Number(cap)) {
+    // Queue an 80% spending alert once per customer per month
+    const alertThreshold = Math.ceil(spendingCap * 0.8);
+
+    if (projectedSpend >= alertThreshold) {
+      const [existingAlerts] = await pool.query(
+        `SELECT id
+         FROM spending_cap_alerts
+         WHERE customer_id = ?
+           AND alert_type = '80_percent'
+           AND created_at >= ?
+           AND created_at < ?
+         LIMIT 1`,
+        [
+          Number(id),
+          toMySQLDate(monthStart),
+          toMySQLDate(nextMonth)
+        ]
+      );
+
+      if (existingAlerts.length === 0) {
+        await pool.query(
+          `INSERT INTO spending_cap_alerts
+           (customer_id, alert_type, spending_kobo, spending_cap_kobo)
+           VALUES (?, '80_percent', ?, ?)`,
+          [Number(id), projectedSpend, spendingCap]
+        );
+      }
+    }
+
+    // Block the request if projected usage reaches or exceeds 100%
+    if (projectedSpend >= spendingCap) {
       return res.status(403).json({
         allowed: false,
         message: "Monthly spending cap reached. Request blocked.",
         currentSpendKobo: currentSpend,
         estimatedCostKobo,
-        spendingCapKobo: Number(cap)
+        projectedSpendKobo: projectedSpend,
+        spendingCapKobo: spendingCap
       });
     }
 
-    // Warn when projected spending reaches 80% of the cap
-    if (projectedSpend >= Number(cap) * 0.8) {
+    // Warn when projected usage reaches 80%
+    if (projectedSpend >= alertThreshold) {
       return res.status(200).json({
         allowed: true,
         warning: "You have reached 80% of your monthly spending cap",
         currentSpendKobo: currentSpend,
         projectedSpendKobo: projectedSpend,
-        spendingCapKobo: Number(cap)
+        spendingCapKobo: spendingCap
       });
     }
 
@@ -296,8 +331,9 @@ const checkSpending = async (req, res) => {
       message: "Request is within the monthly spending cap",
       currentSpendKobo: currentSpend,
       projectedSpendKobo: projectedSpend,
-      spendingCapKobo: Number(cap)
+      spendingCapKobo: spendingCap
     });
+
   } catch (error) {
     console.error("Check spending error:", error.message);
 
