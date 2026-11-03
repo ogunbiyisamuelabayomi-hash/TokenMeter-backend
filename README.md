@@ -101,7 +101,6 @@ TokenMeter/
 │   ├── jobs/
 │   │   └── paymentRetryJob.js
 │   ├── middleware/
-│   ├── models/
 │   ├── routes/
 │   ├── services/
 │   └── utils/
@@ -271,3 +270,12 @@ Backend Web Development – Grazac Academy
 The complete TokenMeter API documentation, including available endpoints, request methods, and example responses, is available on Postman.
 
 [View TokenMeter API Documentation](https://documenter.getpostman.com/view/56988360/2sBYHXRJwu)
+
+
+## Database Design
+
+The database entity relationship diagram (ERD) showing the 12
+database tables, primary keys, foreign keys, and relationships
+is available here:
+
+[View TokenMeter ERD](ERD.md)
