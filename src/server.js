@@ -10,7 +10,9 @@ const {
 
 const PORT = process.env.PORT || 4620;
 
-async function startServer() {
+// connect to the MySQL database and start the server
+
+async function ConnectDB() {
   try {
     const connection = await pool.getConnection();
 
@@ -38,4 +40,4 @@ async function startServer() {
   }
 }
 
-startServer();
+ConnectDB();
