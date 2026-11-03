@@ -1,6 +1,4 @@
 
-require("dotenv").config();
-
 const SQUAD_BASE_URL = "https://sandbox-api-d.squadco.com";
 
 async function initiateSquadPayment(email, customerName, amountKobo, transactionRef) {

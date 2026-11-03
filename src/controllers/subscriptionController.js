@@ -1,5 +1,8 @@
 
 const pool = require("../config/database");
+const {
+  getNextSubscriptionStatus
+} = require("../utils/subscriptionTransitions");
 
 // Create a subscription
 const createSubscription = async (req, res) => {
@@ -147,25 +150,10 @@ const transitionSubscription = async (req, res) => {
     const subscription = subscriptions[0];
     const currentStatus = subscription.status;
 
-    // Define the allowed status transitions
-    const allowedTransitions = {
-      trialing: {
-        payment_succeeded: "active"
-      },
-      active: {
-        payment_failed: "past_due"
-      },
-      past_due: {
-        payment_succeeded: "active",
-        third_retry_failed: "suspended"
-      },
-      suspended: {
-        invoice_paid: "active"
-      }
-    };
-
-    const newStatus =
-      allowedTransitions[currentStatus]?.[event];
+    const newStatus = getNextSubscriptionStatus(
+  currentStatus,
+  event
+);
 
     if (!newStatus) {
       return res.status(400).json({
