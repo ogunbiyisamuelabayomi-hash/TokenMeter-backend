@@ -22,9 +22,13 @@ async function startServer() {
   console.log(`TokenMeter server running on port ${PORT}`);
 
   // Check for due payment retries every minute
-  cron.schedule("* * * * *", () => {
-    processDuePaymentRetries();
-  });
+ cron.schedule("* * * * *", async () => {
+  try {
+    await processDuePaymentRetries();
+  } catch (error) {
+    console.error("Payment retry job failed:", error.message);
+  }
+});
 
   console.log("Payment retry scheduler started");
 });
