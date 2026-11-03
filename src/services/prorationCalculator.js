@@ -19,32 +19,67 @@ function calculateProratedBaseFees(planPeriods) {
       throw new Error("Plan fee must be a non-negative safe integer");
     }
 
-    const start = new Date(periodStart).getTime();
-    const end = new Date(periodEnd).getTime();
-    const billingPeriodStart = new Date(billingStart).getTime();
-    const billingPeriodEnd = new Date(billingEnd).getTime();
+    const start = new Date(periodStart);
+    const end = new Date(periodEnd);
+    const billingPeriodStart = new Date(billingStart);
+    const billingPeriodEnd = new Date(billingEnd);
 
     if (
-      !Number.isFinite(start) ||
-      !Number.isFinite(end) ||
-      !Number.isFinite(billingPeriodStart) ||
-      !Number.isFinite(billingPeriodEnd) ||
+      Number.isNaN(start.getTime()) ||
+      Number.isNaN(end.getTime()) ||
+      Number.isNaN(billingPeriodStart.getTime()) ||
+      Number.isNaN(billingPeriodEnd.getTime()) ||
       start >= end ||
       billingPeriodStart >= billingPeriodEnd
     ) {
       throw new Error("Invalid proration dates");
     }
 
-    const periodDuration = billingPeriodEnd - billingPeriodStart;
-    const planDuration = end - start;
+    // Calculate the number of calendar days in each period
+    const planDays = Math.round(
+      (Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()) -
+       Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate())) /
+      (24 * 60 * 60 * 1000)
+    );
 
-    // Use BigInt to avoid floating-point money calculations
+    const billingDays = new Date(
+      Date.UTC(
+        billingPeriodEnd.getUTCFullYear(),
+        billingPeriodEnd.getUTCMonth(),
+        billingPeriodEnd.getUTCDate()
+      )
+    ).getUTCDate() === 1
+      ? Math.round(
+          (Date.UTC(
+            billingPeriodEnd.getUTCFullYear(),
+            billingPeriodEnd.getUTCMonth(),
+            billingPeriodEnd.getUTCDate()
+          ) -
+          Date.UTC(
+            billingPeriodStart.getUTCFullYear(),
+            billingPeriodStart.getUTCMonth(),
+            billingPeriodStart.getUTCDate()
+          )) / (24 * 60 * 60 * 1000)
+        )
+      : new Date(
+          Date.UTC(
+            billingPeriodStart.getUTCFullYear(),
+            billingPeriodStart.getUTCMonth() + 1,
+            0
+          )
+        ).getUTCDate();
+
+    if (planDays < 1 || billingDays < 1) {
+      throw new Error("Invalid proration duration");
+    }
+
+    // Calculate prorated fee using integer kobo and BigInt
     const numerator =
-      BigInt(monthlyFeeKobo) * BigInt(planDuration);
+      BigInt(monthlyFeeKobo) * BigInt(planDays);
 
-    const denominator = BigInt(periodDuration);
+    const denominator = BigInt(billingDays);
 
-    // Round to the nearest kobo, with halves rounded up
+    // Round to nearest kobo, with halves rounded up
     const amountKobo = Number(
       (numerator + denominator / 2n) / denominator
     );
@@ -66,4 +101,3 @@ function calculateProratedBaseFees(planPeriods) {
 }
 
 module.exports = { calculateProratedBaseFees };
-
