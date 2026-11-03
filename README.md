@@ -25,35 +25,32 @@ It also supports subscription management, spending limits, late usage events, pa
 ## Main Features
 
 ### 1. Customer Management
-- Create customers.
-- Retrieve registered customers.
-- Set monthly spending caps.
-- Check estimated spending before a request.
+- Create and retrieve customers.
+- Set monthly spending caps in kobo.
+- Check estimated spending before processing AI requests.
 
 ### 2. Plan Management
-- Create subscription plans.
+- Create and retrieve subscription plans.
 - Configure monthly base fees.
 - Configure graduated usage pricing tiers.
-- Retrieve available plans.
 
 ### 3. Subscription Management
-- Create customer subscriptions.
-- Retrieve subscriptions.
+- Create and retrieve customer subscriptions.
 - Manage subscription status transitions.
 - Change subscription plans.
 - Calculate prorated base fees when plans change.
+- Reactivate eligible subscriptions after successful payment.
 
 ### 4. Usage Tracking
 - Record customer usage events.
 - Track usage by meter.
 - Reject duplicate event IDs.
 - Accept valid late events within the 48-hour window.
-- Reject events older than the permitted window.
+- Reject events outside the permitted window.
 
 ### 5. Billing and Invoices
 - Calculate usage charges using graduated pricing.
-- Generate invoices.
-- Store invoice line items.
+- Generate invoices and store invoice line items.
 - Calculate prorated subscription fees.
 - Prevent duplicate invoices for the same customer and billing period.
 - Verify invoice totals independently.
@@ -67,15 +64,22 @@ It also supports subscription management, spending limits, late usage events, pa
 - Prevent duplicate webhook processing.
 
 ### 7. Payment Retry System
-- Schedule payment retries.
-- Retry failed payments on days 1, 3, and 5.
+- Automatically check for due payment retries using Node-cron.
+- Schedule retries on days 1, 3, and 5.
 - Suspend subscriptions after the third failed retry.
-- Reactivate subscriptions after successful payment.
+- Support controlled retry testing without contacting Squad.
 
-### 8. Automated Testing
+### 8. Spending Cap Management
+- Allow customers to set monthly spending caps.
+- Trigger an alert when projected usage charges reach 80% of the cap.
+- Store alerts in a database-backed pending queue.
+- Block requests when projected usage charges reach 100% of the cap.
+
+### 9. Automated Testing
 - Jest tests for graduated billing calculations.
+- Jest tests for proration calculations.
 - Jest tests for subscription status transitions.
-- Scripts for usage generation and invoice verification.
+- Jest tests for payment retry scheduling and suspension.
 
 ## Project Structure
 
@@ -95,6 +99,7 @@ TokenMeter/
 │   ├── config/
 │   ├── controllers/
 │   ├── jobs/
+│   │   └── paymentRetryJob.js
 │   ├── middleware/
 │   ├── models/
 │   ├── routes/
@@ -103,7 +108,9 @@ TokenMeter/
 │
 ├── tests/
 │   ├── billingCalculator.test.js
-│   └── subscriptionTransitions.test.js
+│   ├── prorationCalculator.test.js
+│   ├── subscriptionTransitions.test.js
+│   └── paymentRetryService.test.js
 │
 ├── .env
 ├── .gitignore
@@ -177,7 +184,7 @@ Execute the SQL migration file:
 database/migrations/001_create_tables.sql
 ```
 
-in MySQL Workbench.
+using MySQL Workbench.
 
 ### 7. Start the Application
 
@@ -193,11 +200,9 @@ Normal mode:
 npm start
 ```
 
-The application runs on:
+The application runs locally at:
 
-```text
-http://localhost:3030
-```
+`http://localhost:3030`
 
 ## Testing
 
@@ -206,6 +211,8 @@ http://localhost:3030
 ```bash
 npm test
 ```
+
+The automated test suite covers billing calculations, proration, subscription transitions, and payment retry logic.
 
 ### Generate Usage Events
 
@@ -249,6 +256,7 @@ The payment workflow includes:
 - Payment verification is performed server-side.
 - Webhook signatures are validated.
 - Duplicate webhook events are prevented from being processed repeatedly.
+- Payment retry test mode can simulate failures without initiating real Squad payments.
 
 ## Author
 
@@ -256,4 +264,10 @@ The payment workflow includes:
 
 Backend Web Development – Grazac Academy
 
-Project: TokenMeter – Usage-Based Billing for AI Products
+**Project:** TokenMeter – Usage-Based Billing for AI Products
+
+## API Documentation
+
+The complete TokenMeter API documentation, including available endpoints, request methods, and example responses, is available on Postman.
+
+[View TokenMeter API Documentation](https://documenter.getpostman.com/view/56988360/2sBYHXRJwu)
